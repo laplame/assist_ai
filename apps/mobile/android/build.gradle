@@ -1,0 +1,43 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    def kotlinVersion = findProperty('android.kotlinVersion')
+    classpath(kotlinVersion ? "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion" : 'org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+// The installed SDK is platform 36 and build-tools 36.1.0. Expo's AARs declare
+// minCompileSdk 37, but that platform is not in the public SDK index yet.
+ext.compileSdkVersion = 36
+ext.buildToolsVersion = "36.1.0"
+ext.targetSdkVersion = 36
+ext.minSdkVersion = 24
+ext.ndkVersion = "27.1.12297006"
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"
+
+subprojects { sub ->
+  sub.tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doLast {
+      exec {
+        commandLine "bash", "${rootProject.projectDir}/../../scripts/move-apk.sh"
+      }
+    }
+  }
+}
