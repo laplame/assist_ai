@@ -14,6 +14,13 @@ import {
   type TipoJornada,
 } from '@bizne/calculo';
 import { evaluarChecada } from './cadena';
+import {
+  checadaSyncSchema,
+  horasDeJornada,
+  passcodeSincronizacionValido,
+  sincronizacionKioskoSchema,
+  tipoDeJornada,
+} from './esquemasKiosko';
 import { tenantStorage } from './context';
 import { ApiError, salarioBajoMinimo } from './errors';
 import {
@@ -219,6 +226,30 @@ router.get('/salarios/pactado/:membresiaId/historial', async (req, res, next) =>
   }
 });
 
+router.get('/colaboradores', async (req, res, next) => {
+  try {
+    const ctx = exigirUsuario(res.locals.claims);
+    const membresias = await MembresiaModel.find({ tenantId: ctx.tenantId, activa: true }).lean<
+      Array<{ _id: string; nombre: string; rol: string; sucursalId: string; acuerdoVigente: boolean }>
+    >();
+    const sucursales = await SucursalModel.find({ tenantId: ctx.tenantId }).lean<Array<{ _id: string; nombre: string }>>();
+    const porSucursal = new Map(sucursales.map((sucursal) => [sucursal._id, sucursal.nombre]));
+    res.json({
+      items: membresias
+        .filter((item) => item._id !== ctx.membresiaId)
+        .map((item) => ({
+          id: item._id,
+          nombre: item.nombre,
+          rol: item.rol,
+          sucursal: porSucursal.get(item.sucursalId) ?? 'Sucursal',
+          acuerdoVigente: item.acuerdoVigente === true,
+        })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/sucursales', async (req, res, next) => {
   try {
     const ctx = exigirUsuario(res.locals.claims);
@@ -338,7 +369,7 @@ router.post('/dispositivos/checadas/lote', async (req, res, next) => {
     await assertDispositivoVivo(device);
     const body = z
       .object({
-        checadas: z.array(checadaSchema).min(1).max(20),
+        checadas: z.array(checadaSyncSchema).min(1).max(20),
       })
       .parse(req.body);
     const ultima = await ChecadaModel.findOne({ tenantId: device.tenantId, deviceId: device.deviceId }).sort({ seq: -1 }).lean<{
@@ -526,6 +557,188 @@ router.get('/integridad/lotes', async (req, res, next) => {
   }
 });
 
+router.post('/kiosko/sincronizar', async (req, res, next) => {
+  try {
+    const body = sincronizacionKioskoSchema.parse(req.body);
+    if (!passcodeSincronizacionValido(body.passcode)) throw new ApiError('El código de sincronización es 1234.', 'PASSCODE', 401);
+
+    let dispositivo = await DispositivoModel.findOne({ androidIdHash: body.androidIdHash, revocado: false }).lean<{
+      _id: string;
+      tenantId: string;
+      sucursalId: string;
+    } | null>();
+    let tenantId = dispositivo?.tenantId;
+    if (!tenantId) {
+      tenantId = randomUUID();
+      await TenantModel.create({ _id: tenantId, nombre: body.sucursal.nombre, activo: true });
+    }
+
+    const sucursales = [body.sucursal, ...body.sucursales.filter((item) => item.id !== body.sucursal.id)];
+    for (const sucursal of sucursales) {
+      const ajena = await SucursalModel.findOne({ _id: sucursal.id, tenantId: { $ne: tenantId } }).lean<{ _id: string } | null>();
+      if (ajena) throw new ApiError('Esa sucursal ya pertenece a otro equipo.', 'CONFLICTO', 409);
+      await SucursalModel.updateOne(
+        { _id: sucursal.id },
+        {
+          $set: {
+            tenantId,
+            nombre: sucursal.nombre.trim(),
+            estado: sucursal.estado.trim(),
+            municipio: sucursal.municipio.trim(),
+          },
+          $setOnInsert: {
+            avisoLeySilla: 'Hay asientos con respaldo en la sucursal. Este equipo no vigila posturas.',
+          },
+        },
+        { upsert: true },
+      );
+    }
+
+    const personas = [body.admin, ...body.empleados.filter((item) => item.id !== body.admin.id)];
+    for (const persona of personas) {
+      const usuarioId = `usr-${persona.id}`;
+      const telefono = `k${persona.id.replace(/[^a-z0-9]/gi, '').slice(0, 24)}`;
+      await UsuarioModel.updateOne(
+        { _id: usuarioId },
+        { $set: { nombre: persona.nombre.trim() }, $setOnInsert: { telefono, codigoAcceso: randomBytes(8).toString('hex') } },
+        { upsert: true },
+      );
+      await MembresiaModel.updateOne(
+        { _id: persona.id },
+        {
+          $set: {
+            tenantId,
+            usuarioId,
+            rol: persona.id === body.admin.id ? 'admin' : persona.rol,
+            sucursalId: body.sucursal.id,
+            activa: true,
+            pinSalt: persona.salt,
+            pinHash: persona.pinHash,
+            acuerdoVigente: true,
+            consentimientoFotoVigente: true,
+            nombre: persona.nombre.trim(),
+          },
+        },
+        { upsert: true },
+      );
+    }
+
+    for (const pacto of body.pactos) {
+      const horas = horasDeJornada(pacto.tipoJornada);
+      const vigente = await PactadoModel.findOne({ tenantId, membresiaId: pacto.empleadoId, vigente: true }).lean<{
+        salarioDiarioCentavos: number;
+        jornadaHorasBase: number;
+      } | null>();
+      if (vigente && vigente.salarioDiarioCentavos === pacto.salarioDiarioCentavos && vigente.jornadaHorasBase === horas) continue;
+      await PactadoModel.updateMany({ tenantId, membresiaId: pacto.empleadoId, vigente: true }, { $set: { vigente: false } });
+      await PactadoModel.create({
+        tenantId,
+        membresiaId: pacto.empleadoId,
+        salarioDiarioCentavos: pacto.salarioDiarioCentavos,
+        jornadaHorasBase: horas,
+        negociadoPor: body.admin.id,
+        fecha: new Date().toISOString(),
+        aceptadoPorColaborador: true,
+        vigente: true,
+      });
+    }
+
+    if (!dispositivo) {
+      const deviceId = randomUUID();
+      await DispositivoModel.create({
+        _id: deviceId,
+        tenantId,
+        sucursalId: body.sucursal.id,
+        androidIdHash: body.androidIdHash,
+        revocado: false,
+        modelo: body.modelo,
+      });
+      dispositivo = { _id: deviceId, tenantId, sucursalId: body.sucursal.id };
+    } else {
+      await DispositivoModel.updateOne({ _id: dispositivo._id }, { $set: { sucursalId: body.sucursal.id, modelo: body.modelo } });
+      dispositivo = { ...dispositivo, sucursalId: body.sucursal.id };
+    }
+
+    const ultima = await ChecadaModel.findOne({ tenantId, deviceId: dispositivo._id }).sort({ seq: -1 }).lean<{
+      seq: number;
+      hashActual: string;
+    } | null>();
+    let cursor = ultima ? { seq: ultima.seq, hashActual: ultima.hashActual } : null;
+    const checadas = [];
+    for (const entrada of body.checadas) {
+      const previa = await ChecadaModel.findById(entrada.id).lean<{ _id: string } | null>();
+      if (previa) {
+        checadas.push({ id: entrada.id, estado: 'duplicada' as const });
+        continue;
+      }
+      const evaluacion = evaluarChecada(cursor, { ...entrada, deviceId: dispositivo._id });
+      if (evaluacion.estado === 'rechazada') {
+        checadas.push({ id: entrada.id, estado: 'rechazada' as const, motivo: evaluacion.motivo });
+        continue;
+      }
+      await ChecadaModel.create({
+        _id: entrada.id,
+        tenantId,
+        deviceId: dispositivo._id,
+        ...entrada,
+        hojaMerkle: entrada.hojaMerkle,
+      });
+      cursor = { seq: entrada.seq, hashActual: entrada.hashActual };
+      checadas.push({ id: entrada.id, estado: 'ok' as const });
+    }
+
+    const [sucursalesGuardadas, membresias, pactosVigentes] = await Promise.all([
+      SucursalModel.find({ tenantId }).lean<Array<{ _id: string; nombre: string; estado: string; municipio: string }>>(),
+      MembresiaModel.find({ tenantId, activa: true }).lean<
+        Array<{ _id: string; nombre: string; pinHash: string; pinSalt: string; rol: string }>
+      >(),
+      PactadoModel.find({ tenantId, vigente: true }).lean<Array<{ membresiaId: string; salarioDiarioCentavos: number; jornadaHorasBase: number }>>(),
+    ]);
+
+    const deviceToken = firmar(
+      {
+        typ: 'dispositivo',
+        sub: dispositivo._id,
+        tenantId,
+        sucursalId: body.sucursal.id,
+        deviceId: dispositivo._id,
+        rol: 'dispositivo',
+      },
+      60 * 60 * 24 * 365,
+    );
+    await AuditoriaModel.create({ actor: dispositivo._id, accion: 'sync-kiosko', detalle: tenantId, en: new Date() });
+    res.json({
+      deviceToken,
+      deviceId: dispositivo._id,
+      tenantId,
+      sucursalId: body.sucursal.id,
+      sucursal: body.sucursal.nombre,
+      sucursales: sucursalesGuardadas.map((item) => ({
+        id: item._id,
+        nombre: item.nombre,
+        estado: item.estado,
+        municipio: item.municipio,
+      })),
+      empleados: membresias.map((item) => ({
+        id: item._id,
+        nombre: item.nombre,
+        pinHash: item.pinHash,
+        salt: item.pinSalt,
+        rol: item.rol,
+      })),
+      pactos: pactosVigentes.map((item) => ({
+        empleadoId: item.membresiaId,
+        salarioDiarioCentavos: item.salarioDiarioCentavos,
+        tipoJornada: tipoDeJornada(item.jornadaHorasBase),
+      })),
+      checadas,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/superadmin/tenants', async (req, res, next) => {
   try {
     const clave = req.header('x-superadmin-key');
@@ -554,22 +767,6 @@ router.use((error: unknown, _req: unknown, res: { status: (code: number) => { js
 });
 
 export const v1Router = router;
-
-const checadaSchema = z.object({
-  id: z.string().uuid(),
-  seq: z.number().int().positive(),
-  empleadoId: z.string(),
-  tipo: z.string(),
-  tsDispositivo: z.number(),
-  offsetAplicado: z.number(),
-  fotoSha256: z.string(),
-  metodoIdentificacion: z.string(),
-  huellaOsConfirmada: z.boolean(),
-  hashPrev: z.string(),
-  hashActual: z.string(),
-  salt: z.string(),
-  hojaMerkle: z.string(),
-});
 
 function exigirUsuario(claims: Claims | undefined): ClaimsUsuario {
   if (!claims || claims.typ !== 'usuario') throw new ApiError('Token de membresía requerido', 'NO_TENANT', 401);

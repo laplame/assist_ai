@@ -1,11 +1,16 @@
 {
   "expo": {
-    "name": "BizneAI Kiosko",
+    "name": "assit-ai",
     "slug": "bizneai-kiosko",
     "scheme": "bizneai",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A12"
+    },
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true
@@ -13,10 +18,10 @@
     "android": {
       "package": "com.bizneai.kiosko",
       "adaptiveIcon": {
-        "backgroundColor": "#0A0A12",
-        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/icon.png",
         "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "monochromeImage": "./assets/icon.png"
       },
       "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       "predictiveBackGestureEnabled": false
@@ -26,7 +31,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "BizneAI Kiosko usa la cámara para tomar tu foto al registrar asistencia.",
+          "cameraPermission": "assit-ai usa la cámara para tomar tu foto al registrar asistencia.",
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
@@ -41,7 +46,7 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": false
+            "usesCleartextTraffic": true
           }
         }
       ]

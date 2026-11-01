@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useSesion } from '../app/sesion.ts'
 import { v1 } from '../lib/v1.ts'
+import { ColaboradoresMenu, type Colaborador } from './ColaboradoresMenu.tsx'
 
 interface Simulacion {
   valorHora: number
@@ -34,6 +35,7 @@ export function PanelPage() {
   const [jornada, setJornada] = useState<'diurna' | 'nocturna' | 'mixta'>('diurna')
   const [simulacion, setSimulacion] = useState<Simulacion | null>(null)
   const [membresiaId, setMembresiaId] = useState('mem-ana')
+  const [colaboradorNombre, setColaboradorNombre] = useState<string | null>(null)
   const [pactado, setPactado] = useState('400')
   const [aceptado, setAceptado] = useState(false)
   const [salarioMsg, setSalarioMsg] = useState<string | null>(null)
@@ -42,6 +44,11 @@ export function PanelPage() {
   const [lotes, setLotes] = useState<Lote[]>([])
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10))
   const [error, setError] = useState<string | null>(null)
+
+  function elegir(colaborador: Colaborador) {
+    setMembresiaId(colaborador.id)
+    setColaboradorNombre(colaborador.nombre)
+  }
 
   async function simular(event: FormEvent) {
     event.preventDefault()
@@ -135,7 +142,7 @@ export function PanelPage() {
       <form className="sheet form" onSubmit={(event) => void guardarSalario(event).catch((reason) => setError(mensaje(reason)))}>
         <h2>Salario pactado</h2>
         <label>
-          Membresía
+          Membresía{colaboradorNombre ? ` · ${colaboradorNombre}` : ''}
           <input value={membresiaId} onChange={(event) => setMembresiaId(event.target.value)} />
         </label>
         <label>
@@ -179,6 +186,7 @@ export function PanelPage() {
           </p>
         ))}
       </form>
+      <ColaboradoresMenu token={token} onElegir={elegir} />
     </section>
   )
 }

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
-import { router } from 'expo-router';
-import { contarPendientes, leerConfig } from '../infrastructure/db';
-import { emparejar, sincronizar } from '../infrastructure/api';
-import { leerToken } from '../infrastructure/secure';
+import { router, useFocusEffect } from 'expo-router';
+import { contarPendientes, leerConfig, prepararModoLocal } from '../infrastructure/db';
+import { emparejar, hayServidor, sincronizar } from '../infrastructure/api';
+import { guardarToken, leerToken } from '../infrastructure/secure';
+import { ColaboradoresMenu } from '../ui/ColaboradoresMenu';
 import { colors } from '../ui/theme';
 
 export default function HomeScreen() {
@@ -12,6 +13,9 @@ export default function HomeScreen() {
   const [listo, setListo] = useState(false);
   const [sucursal, setSucursal] = useState('Sucursal');
   const [pendientes, setPendientes] = useState(0);
+  const [local, setLocal] = useState(false);
+  const [enLinea, setEnLinea] = useState(false);
+  const [formulario, setFormulario] = useState(false);
   const [codigo, setCodigo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [ahora, setAhora] = useState(new Date());
@@ -21,15 +25,42 @@ export default function HomeScreen() {
     return () => clearInterval(reloj);
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      void leerConfig('sucursal').then((nombre) => {
+        if (nombre) setSucursal(nombre);
+      });
+    }, []),
+  );
+
   useEffect(() => {
     void (async () => {
       const guardado = await leerToken();
-      setToken(guardado);
-      setSucursal((await leerConfig('sucursal')) ?? 'Sucursal');
+      const modoLocal = (await leerConfig('modo')) === 'local';
+      if (!guardado) {
+        router.replace('/bienvenida');
+        return;
+      } else {
+        setToken(guardado);
+        setLocal(modoLocal || guardado === 'local');
+        setSucursal((await leerConfig('sucursal')) ?? 'Sucursal');
+        if (guardado !== 'local') setEnLinea(await hayServidor());
+      }
       setPendientes(await contarPendientes());
       setListo(true);
     })();
   }, []);
+
+  async function sinServidor() {
+    setError(null);
+    await prepararModoLocal();
+    await guardarToken('local');
+    setToken('local');
+    setLocal(true);
+    setEnLinea(false);
+    setFormulario(false);
+    setSucursal('Sucursal Roma');
+  }
 
   async function vincular() {
     setError(null);
@@ -38,12 +69,20 @@ export default function HomeScreen() {
       setError('Se necesita la ubicación para confirmar que el kiosko está en la sucursal.');
       return;
     }
-    const lugar = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
     try {
+      const lugar = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Sin conexión. Sigue checando en este teléfono.')), 8000);
+        }),
+      ]);
       const alta = await emparejar({ codigo, lat: lugar.coords.latitude, lng: lugar.coords.longitude });
       const guardado = await leerToken();
       if (guardado) await sincronizar(guardado);
       setToken(guardado);
+      setLocal(false);
+      setEnLinea(true);
+      setFormulario(false);
       setSucursal(alta.sucursal);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'No se pudo vincular');
@@ -52,10 +91,10 @@ export default function HomeScreen() {
 
   if (!listo) return <View style={styles.screen} />;
 
-  if (!token) {
+  if (!token || formulario) {
     return (
       <View style={styles.screen}>
-        <Text style={styles.eyebrow}>BizneAI Kiosko</Text>
+        <Text style={styles.eyebrow}>assit-ai</Text>
         <Text style={styles.title}>Vincular a sucursal</Text>
         <TextInput
           value={codigo}
@@ -69,17 +108,33 @@ export default function HomeScreen() {
         <Pressable style={styles.primary} onPress={() => void vincular()}>
           <Text style={styles.primaryText}>Vincular</Text>
         </Pressable>
+        <Pressable style={styles.local} onPress={() => void sinServidor()}>
+          <Text style={styles.secondaryText}>Continuar sin servidor</Text>
+        </Pressable>
+        <Text style={styles.hint}>Sin conexión también puedes checar. Admin 9753 · Ana 2580.</Text>
+        {token ? (
+          <Pressable onPress={() => setFormulario(false)}>
+            <Text style={styles.centerLink}>Volver al reloj</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
 
-  const syncColor = pendientes > 0 ? colors.amber : colors.mint;
+  const syncColor = !enLinea || local || pendientes > 0 ? colors.amber : colors.mint;
+  const estado = local || !enLinea
+    ? pendientes > 0
+      ? `Sin conexión · ${pendientes} en el teléfono`
+      : 'Sin conexión'
+    : pendientes > 0
+      ? `${pendientes} por enviar`
+      : 'Al corriente';
   return (
     <View style={styles.screen}>
       <View style={styles.top}>
-        <Text style={[styles.dot, { color: syncColor }]}>{pendientes > 0 ? `${pendientes} por enviar` : 'Al corriente'}</Text>
+        <Text style={[styles.dot, { color: syncColor }]}>{estado}</Text>
         <Pressable onPress={() => router.push('/aviso')}>
-          <Text style={styles.link}>Aviso de privacidad</Text>
+          <Text style={styles.topLink}>Aviso de privacidad</Text>
         </Pressable>
       </View>
       <Text style={styles.clock}>{ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</Text>
@@ -89,9 +144,15 @@ export default function HomeScreen() {
         <Text style={styles.checarText}>Checar</Text>
       </Pressable>
       <View style={styles.row}>
-        <Pressable style={styles.secondary} onPress={() => router.push({ pathname: '/identificar', params: { modo: 'pausa' } })}>
-          <Text style={styles.secondaryText}>Pausa</Text>
+        <Pressable style={styles.secondary} onPress={() => router.push({ pathname: '/identificar', params: { modo: 'pausa_inicio' } })}>
+          <Text style={styles.secondaryText}>Inicio de pausa</Text>
         </Pressable>
+        <Pressable style={styles.secondary} onPress={() => router.push({ pathname: '/identificar', params: { modo: 'pausa_fin' } })}>
+          <Text style={styles.secondaryText}>Fin de pausa</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.pausaNota}>Para sentarse. Con PIN y sin foto.</Text>
+      <View style={styles.row}>
         <Pressable style={styles.secondary} onPress={() => router.push('/mias')}>
           <Text style={styles.secondaryText}>Mis checadas</Text>
         </Pressable>
@@ -100,6 +161,12 @@ export default function HomeScreen() {
         </Pressable>
       </View>
       <Text style={styles.silla}>Hay asientos con respaldo en la sucursal. Este equipo no vigila posturas.</Text>
+      {local ? (
+        <Pressable onPress={() => setFormulario(true)}>
+          <Text style={styles.centerLink}>Vincular sucursal</Text>
+        </Pressable>
+      ) : null}
+      <ColaboradoresMenu />
     </View>
   );
 }
@@ -120,8 +187,12 @@ const styles = StyleSheet.create({
   checarText: { color: colors.text, fontSize: 36, fontWeight: '800' },
   row: { flexDirection: 'row', gap: 12, marginTop: 16 },
   secondary: { flex: 1, borderColor: colors.surface, borderWidth: 1, borderRadius: 18, padding: 16, alignItems: 'center', backgroundColor: colors.surface },
-  secondaryText: { color: colors.text, fontWeight: '700' },
-  link: { color: colors.muted },
+  local: { marginTop: 12, backgroundColor: colors.surface, borderRadius: 999, padding: 16, alignItems: 'center' },
+  secondaryText: { color: colors.text, fontWeight: '700', textAlign: 'center' },
+  hint: { color: colors.muted, marginTop: 16, lineHeight: 20 },
+  topLink: { color: colors.muted },
+  centerLink: { color: colors.muted, textAlign: 'center', marginTop: 16 },
   dot: { fontWeight: '700' },
-  silla: { color: colors.muted, textAlign: 'center', marginTop: 28, lineHeight: 20 },
+  pausaNota: { color: colors.muted, textAlign: 'center', marginTop: 8 },
+  silla: { color: colors.muted, textAlign: 'center', marginTop: 20, lineHeight: 20 },
 });

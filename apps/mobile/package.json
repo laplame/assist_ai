@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@bizne/calculo": "file:./vendor/calculo",
     "@bizne/integridad": "file:./vendor/integridad",
     "expo": "~58.0.22",
     "expo-application": "~58.1.2",

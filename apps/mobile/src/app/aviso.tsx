@@ -7,12 +7,11 @@ export default function AvisoScreen() {
     <View style={styles.screen}>
       <Text style={styles.title}>Aviso de privacidad</Text>
       <Text style={styles.copy}>
-        BizneAI Kiosko registra la hora de entrada y salida, y puede tomar una foto solo para verificar la asistencia. La foto no se usa para reconocer el rostro en el teléfono. El PIN identifica a la persona; la huella del sistema, si algún día se usa, solo confirma presencia y la app no la guarda.
+        assit-ai registra la hora de entrada y salida, y puede tomar una foto solo para verificar la asistencia. La foto no se usa para reconocer el rostro en el teléfono. El PIN identifica a la persona; la huella del sistema, si algún día se usa, solo confirma presencia y la app no la guarda.
       </Text>
       <Text style={styles.copy}>
         El acuerdo de uso del registro y el consentimiento de la foto se firman en el alta, no aquí. Puedes consultar tus checadas de los últimos 14 días con tu PIN. Una corrección no borra la original: se agrega un evento nuevo.
       </Text>
-      <Text style={styles.copy}>Esto no es asesoría legal. El aviso integral lo entrega tu empleador.</Text>
       <Pressable onPress={() => router.back()}>
         <Text style={styles.link}>Volver</Text>
       </Pressable>

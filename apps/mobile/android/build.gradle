@@ -35,8 +35,11 @@ apply plugin: "com.facebook.react.rootproject"
 subprojects { sub ->
   sub.tasks.matching { it.name == "assembleRelease" }.configureEach {
     doLast {
-      exec {
-        commandLine "bash", "${rootProject.projectDir}/../../scripts/move-apk.sh"
+      def script = new File(rootProject.projectDir, "../../../scripts/move-apk.sh").canonicalFile
+      def proceso = ["bash", script.absolutePath].execute()
+      proceso.waitForProcessOutput(System.out, System.err)
+      if (proceso.exitValue() != 0) {
+        throw new GradleException("No se pudo mover el APK a la raíz del proyecto")
       }
     }
   }

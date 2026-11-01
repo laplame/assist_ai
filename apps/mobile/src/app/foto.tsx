@@ -28,8 +28,12 @@ export default function FotoScreen() {
     setTomando(true);
     let fotoSha = 'sin_foto';
     if (!sinFoto && camara.current) {
-      const foto = await camara.current.takePictureAsync({ quality: 0.5, base64: false, shutterSound: false });
-      fotoSha = sha256Hex(utf8(foto?.uri ?? 'sin_foto'));
+      try {
+        const foto = await camara.current.takePictureAsync({ quality: 0.5, base64: false, shutterSound: false });
+        fotoSha = sha256Hex(utf8(foto?.uri ?? 'sin_foto'));
+      } catch {
+        fotoSha = 'sin_foto';
+      }
     }
     const checada = await crearChecada({
       empleadoId: params.empleadoId,

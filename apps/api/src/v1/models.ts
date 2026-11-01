@@ -80,6 +80,7 @@ const dispositivoSchema = new Schema(
   { _id: String, tenantId: String, sucursalId: String, androidIdHash: String, revocado: Boolean, modelo: String },
   { versionKey: false },
 );
+dispositivoSchema.index({ androidIdHash: 1, revocado: 1 });
 
 const checadaSchema = new Schema(
   {

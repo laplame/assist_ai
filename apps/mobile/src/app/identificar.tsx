@@ -8,6 +8,8 @@ const teclas = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'borrar', '0', 'ok'
 
 export default function IdentificarScreen() {
   const params = useLocalSearchParams<{ modo?: string }>();
+  const modo = params.modo === 'pausa_inicio' || params.modo === 'pausa_fin' ? params.modo : 'jornada';
+  const titulo = modo === 'pausa_inicio' ? 'Inicio de pausa' : modo === 'pausa_fin' ? 'Fin de pausa' : 'Identifícate';
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [bloqueadoHasta, setBloqueadoHasta] = useState(0);
@@ -24,13 +26,13 @@ export default function IdentificarScreen() {
       setError('No se pudo identificar');
       return;
     }
-    const destino = params.modo === 'pausa' ? '/comprobante' : '/foto';
-    router.replace({ pathname: destino, params: { empleadoId: empleado.id, nombre: empleado.nombre, modo: params.modo ?? 'jornada' } });
+    const destino = modo === 'jornada' ? '/foto' : '/comprobante';
+    router.replace({ pathname: destino, params: { empleadoId: empleado.id, nombre: empleado.nombre, modo } });
   }
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.title}>{params.modo === 'pausa' ? 'Pausa' : 'Identifícate'}</Text>
+      <Text style={styles.title}>{titulo}</Text>
       <Text style={styles.pin}>{'•'.repeat(pin.length) || 'PIN'}</Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.grid}>

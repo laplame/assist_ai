@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { crearChecada } from '../infrastructure/db';
 import { colors } from '../ui/theme';
 
@@ -15,12 +15,15 @@ const etiquetas: Record<string, string> = {
 
 export default function ComprobanteScreen() {
   const params = useLocalSearchParams<{ nombre?: string; tipo?: string; folio?: string; hora?: string; empleadoId?: string; modo?: string }>();
+  const guardada = useRef(false);
 
   useEffect(() => {
-    if (params.modo !== 'pausa' || !params.empleadoId) return;
+    const tipo = params.modo === 'pausa_inicio' || params.modo === 'pausa_fin' ? params.modo : null;
+    if (!tipo || !params.empleadoId || guardada.current) return;
+    guardada.current = true;
     void crearChecada({
       empleadoId: params.empleadoId,
-      tipoForzado: 'pausa_inicio',
+      tipoForzado: tipo,
       fotoSha256: 'sin_foto',
       metodoIdentificacion: 'pin',
       huellaOsConfirmada: false,
